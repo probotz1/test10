@@ -1,7 +1,9 @@
-import time, math, asyncio
-from bot import *
+import time
+import math
+import asyncio
+from pyrogram import Client
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pyrogram.enums import ParseMode
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, User
 
 PROGRESS = """
 • {0} of {1}
@@ -9,7 +11,7 @@ PROGRESS = """
 • ETA: {3}
 """
 
-async def progress_for_pyrogram(current, total, ud_type, message, start):
+async def progress_for_pyrogram(current, total, ud_type, message, start, client: Client):
     now = time.time()
     diff = now - start
     if round(diff % 10.00) == 0 or current == total:
@@ -31,38 +33,40 @@ async def progress_for_pyrogram(current, total, ud_type, message, start):
             estimated_total_time if estimated_total_time != '' else "Calculating"
         )
         try:
-            await client.edit_message_text(chat_id=message.chat.id,message_id=message.id,
+            await client.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message.id,
                 text="{}\n{}".format(
                     ud_type,
                     tmp
                 ),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("JOIN", url = 'https://t.me/ATXBOTSi')]]) #instead of reply_markup u can use parse_mode=ParseMode.MARKDOWN
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("JOIN", url='https://t.me/ATXBOTSi')]]),
+                parse_mode=ParseMode.MARKDOWN
             )
         except Exception as e:
-            LOG.error(f'Senpai Error: {e}')            
-            pass
+            print(f"Error: {e}")
         await asyncio.sleep(5)
 
 def humanbytes(size):
-    """ humanize size """
+    """ Humanize size """
     if not size:
         return ""
     power = 1024
-    t_n = 0
-    power_dict = {0: ' ', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
+    n = 0
+    power_dict = {0: '', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
     while size > power:
         size /= power
-        t_n += 1
-    return "{:.2f} {}B".format(size, power_dict[t_n])
+        n += 1
+    return "{:.2f} {}B".format(size, power_dict[n])
 
 
 def TimeFormatter(seconds: float) -> str:
-    """ humanize time """
+    """ Humanize time """
     minutes, seconds = divmod(int(seconds), 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
     tmp = ((str(days) + "d, ") if days else "") + \
-        ((str(hours) + "h, ") if hours else "") + \
-        ((str(minutes) + "m, ") if minutes else "") + \
-        ((str(seconds) + "s, ") if seconds else "")
+          ((str(hours) + "h, ") if hours else "") + \
+          ((str(minutes) + "m, ") if minutes else "") + \
+          ((str(seconds) + "s, ") if seconds else "")
     return tmp[:-2]
