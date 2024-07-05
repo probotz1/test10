@@ -3,7 +3,7 @@ import time
 import math
 import subprocess
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pyrogram.errors import MessageNotModified
 from config import BOT_TOKEN, API_ID, API_HASH
 
@@ -230,8 +230,8 @@ async def handle_video(client, message: Message):
         user_state[user_id]["step"] = "send_audio"
         await message.reply("Now send me the audio file you want to merge with this video.")
 
-# Message handler for audio
-@app.on_message(filters.audio | filters.voice)
+# Command handler for audio files
+@app.on_message(filters.audio)
 async def handle_audio(client, message: Message):
     user_id = message.from_user.id
     if user_id not in user_state:
@@ -242,7 +242,7 @@ async def handle_audio(client, message: Message):
     if command == "merge_audio" and user_state[user_id]["step"] == "send_audio":
         audio_file = await download_media(client, message, DOWNLOADS_DIR)
         video_file = user_state[user_id]["video_file"]
-        output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}.mp4")
+        output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}")
 
         try:
             cmd = [
@@ -259,16 +259,7 @@ async def handle_audio(client, message: Message):
         os.remove(output_file)
         user_state.pop(user_id)
 
-# Message handler for videos (continued)
-@app.on_message(filters.video)
-async def handle_video_continued(client, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_state:
-        return
-
-    command = user_state[user_id]["command"]
-
-    if command == "video_to_audio":
+    elif command == "video_to_audio":
         video_file = await download_media(client, message, DOWNLOADS_DIR)
         output_file = os.path.join(DOWNLOADS_DIR, f"{os.path.splitext(os.path.basename(video_file))[0]}.mp3")
 
