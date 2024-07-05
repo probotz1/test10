@@ -2,7 +2,6 @@ import os
 import time
 import math
 import subprocess
-import json
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from pyrogram.errors import MessageNotModified
@@ -89,6 +88,20 @@ async def progress_callback(current, total, message, start_time):
         except Exception as e:
             print(f"Error updating progress: {e}")
 
+# Function to run ffmpeg commands
+def run_ffmpeg(cmd):
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        raise Exception(f"FFmpeg error: {result.stderr.decode()}")
+
+# Function to download media with progress updates
+async def download_media(client, message, path):
+    start_time = time.time()
+    size = message.video.file_size if message.video else message.audio.file_size
+    progress = lambda current, total: progress_callback(current, total, message, start_time)
+    file_path = await client.download_media(message, path, progress=progress)
+    return file_path
+
 # Command handler for '/start' command
 @app.on_message(filters.command("start"))
 async def start_command(client, message: Message):
@@ -116,34 +129,114 @@ async def help_command(client, message: Message):
 # Command handler for '/trim_video' command
 @app.on_message(filters.command("trim_video"))
 async def trim_video_command(client, message: Message):
-    await message.reply("Please specify the start and end times in seconds (e.g., 10 30).")
+    args = message.text.split()
+    if len(args) != 3:
+        await message.reply("Please specify the start and end times in seconds (e.g., /trim_video 10 30).")
+        return
+
+    try:
+        start_time = int(args[1])
+        end_time = int(args[2])
+        if start_time >= end_time:
+            await message.reply("End time must be greater than start time.")
+            return
+
+        await message.reply("Please send the video you want to trim.")
+
+        @app.on_message(filters.video)
+        async def trim_video(client, video_message: Message):
+            video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+            output_file = os.path.join(DOWNLOADS_DIR, f"trimmed_{os.path.basename(video_file)}")
+
+            try:
+                cmd = [
+                    "ffmpeg", "-i", video_file, "-ss", str(start_time), "-to", str(end_time),
+                    "-c", "copy", output_file
+                ]
+                run_ffmpeg(cmd)
+                await video_message.reply_video(output_file)
+                os.remove(video_file)
+                os.remove(output_file)
+            except Exception as e:
+                await video_message.reply(f"Error trimming video: {e}")
+                os.remove(video_file)
+
+    except ValueError:
+        await message.reply("Please provide valid start and end times in seconds.")
 
 # Command handler for '/remove_audio' command
 @app.on_message(filters.command("remove_audio"))
 async def remove_audio_command(client, message: Message):
     await message.reply("Send me a video to remove audio from.")
 
+    @app.on_message(filters.video)
+    async def remove_audio(client, video_message: Message):
+        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+        output_file = os.path.join(DOWNLOADS_DIR, f"no_audio_{os.path.basename(video_file)}")
+
+        try:
+            cmd = [
+                "ffmpeg", "-i", video_file, "-c", "copy", "-an", output_file
+            ]
+            run_ffmpeg(cmd)
+            await video_message.reply_video(output_file)
+            os.remove(video_file)
+            os.remove(output_file)
+        except Exception as e:
+            await video_message.reply(f"Error removing audio: {e}")
+            os.remove(video_file)
+
 # Command handler for '/merge_audio' command
 @app.on_message(filters.command("merge_audio"))
 async def merge_audio_command(client, message: Message):
     await message.reply("Send me the video whose audio you want to replace, followed by the new audio file.")
+
+    @app.on_message(filters.video)
+    async def video_received(client, video_message: Message):
+        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+        await video_message.reply("Now send me the audio file you want to merge with this video.")
+
+        @app.on_message(filters.audio | filters.voice)
+        async def audio_received(client, audio_message: Message):
+            audio_file = await download_media(client, audio_message, DOWNLOADS_DIR)
+            output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}")
+
+            try:
+                cmd = [
+                    "ffmpeg", "-i", video_file, "-i", audio_file, "-c:v", "copy", "-map", "0:v:0",
+                    "-map", "1:a:0", "-shortest", output_file
+                ]
+                run_ffmpeg(cmd)
+                await video_message.reply_video(output_file)
+                os.remove(video_file)
+                os.remove(audio_file)
+                os.remove(output_file)
+            except Exception as e:
+                await video_message.reply(f"Error merging audio: {e}")
+                os.remove(video_file)
+                os.remove(audio_file)
 
 # Command handler for '/video_to_audio' command
 @app.on_message(filters.command("video_to_audio"))
 async def video_to_audio_command(client, message: Message):
     await message.reply("Send me a video to extract audio from.")
 
-# Message handler for videos
-@app.on_message(filters.video)
-async def handle_video(client, message: Message):
-    # Implement logic to handle various video processing tasks based on user state
-    pass
+    @app.on_message(filters.video)
+    async def extract_audio(client, video_message: Message):
+        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+        output_file = os.path.join(DOWNLOADS_DIR, f"{os.path.splitext(os.path.basename(video_file))[0]}.mp3")
 
-# Callback query handler for interactive options
-@app.on_callback_query()
-async def handle_callback_query(client, query: CallbackQuery):
-    # Implement callback query handling for interactive options
-    pass
+        try:
+            cmd = [
+                "ffmpeg", "-i", video_file, "-q:a", "0", "-map", "a", output_file
+            ]
+            run_ffmpeg(cmd)
+            await video_message.reply_audio(output_file)
+            os.remove(video_file)
+            os.remove(output_file)
+        except Exception as e:
+            await video_message.reply(f"Error extracting audio: {e}")
+            os.remove(video_file)
 
 if __name__ == "__main__":
     app.run()
