@@ -1,125 +1,149 @@
-
 import os
 import time
-from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-import config
-from progress import progress_for_pyrogram
-import asyncio
+import math
 import subprocess
+import json
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
+from pyrogram.errors import MessageNotModified
+from config import BOT_TOKEN, API_ID, API_HASH
 
-# Initialize Pyrogram Client
-app = Client("my_bot", api_id=config.api_id, api_hash=config.api_hash, bot_token=config.bot_token)
+# Initialize Pyrogram client
+app = Client("my_bot", bot_token=BOT_TOKEN, api_id=API_ID, api_hash=API_HASH)
 
-# State variables
-user_state = {}
+# Directory for storing downloaded files
+DOWNLOADS_DIR = "downloads"
 
+# Ensure the downloads directory exists
+if not os.path.exists(DOWNLOADS_DIR):
+    os.makedirs(DOWNLOADS_DIR)
+
+# Progress template for status updates
+PROGRESS_TEMPLATE = """
+Progress: {0}%
+Downloaded: {1} / {2}
+Speed: {3}/s
+ETA: {4}
+"""
+
+# Dictionary to store the last update time for each message
+last_update_time = {}
+
+# Function to display human-readable file size
+def human_readable_size(size):
+    power = 1024
+    n = 0
+    power_labels = {0: '', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
+    while size > power:
+        size /= power
+        n += 1
+    return f"{size:.2f} {power_labels[n]}B"
+
+# Function to format time duration
+def time_formatter(seconds):
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    time_str = ((f"{days}d, " if days else "") +
+                (f"{hours}h, " if hours else "") +
+                (f"{minutes}m, " if minutes else "") +
+                (f"{seconds}s, " if seconds else ""))
+    return time_str.strip(', ')
+
+# Progress callback function to update progress during downloads and uploads
+async def progress_callback(current, total, message, start_time):
+    now = time.time()
+    elapsed_time = now - start_time
+    if elapsed_time == 0:
+        elapsed_time = 1  # Avoid division by zero
+
+    speed = current / elapsed_time
+    percentage = current * 100 / total
+    eta = (total - current) / speed
+
+    progress_str = "[{0}{1}]".format(
+        ''.join(["⬢" for _ in range(math.floor(percentage / 10))]),
+        ''.join(["⬡" for _ in range(10 - math.floor(percentage / 10))])
+    )
+    tmp = progress_str + PROGRESS_TEMPLATE.format(
+        round(percentage, 2),
+        human_readable_size(current),
+        human_readable_size(total),
+        human_readable_size(speed),
+        time_formatter(eta)
+    )
+
+    # Throttle updates to every 10 seconds
+    message_id = message.message_id
+    if message_id not in last_update_time or (now - last_update_time[message_id]) > 10:
+        try:
+            await message.edit(
+                text=tmp,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Owner", url='https://t.me/atxbots')]]
+                )
+            )
+            last_update_time[message_id] = now
+        except MessageNotModified:
+            pass
+        except Exception as e:
+            print(f"Error updating progress: {e}")
+
+# Command handler for '/start' command
 @app.on_message(filters.command("start"))
-async def start(client, message: Message):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Video Trimmer", callback_data="video_trimmer")],
-        [InlineKeyboardButton("Audio Remover", callback_data="audio_remover")],
-        [InlineKeyboardButton("Audio Replacer", callback_data="audio_replacer")],
-        [InlineKeyboardButton("Video to Audio", callback_data="video_to_audio")],
-    ])
-    await message.reply("Choose an option:", reply_markup=keyboard)
+async def start_command(client, message: Message):
+    welcome_text = (
+        "Hello! I am your Bot.\n\n"
+        "I can help you with audio and video tasks.\n\n"
+        "To use me, send me a video or audio file and choose an option."
+    )
+    await message.reply(welcome_text)
 
+# Command handler for '/help' command
 @app.on_message(filters.command("help"))
-async def help(client, message: Message):
-    await message.reply("Send me a video or audio file, and I can trim, remove audio, replace audio, or extract audio.")
+async def help_command(client, message: Message):
+    help_text = (
+        "Here are the available commands:\n\n"
+        "/start - Start the bot\n"
+        "/help - Show this help message\n"
+        "/trim_video - Trim a video\n"
+        "/remove_audio - Remove audio from a video\n"
+        "/merge_audio - Merge audio with a video\n"
+        "/video_to_audio - Extract audio from a video\n"
+    )
+    await message.reply(help_text)
 
-@app.on_callback_query()
-async def handle_callback_query(client, callback_query: CallbackQuery):
-    data = callback_query.data
-    user_id = callback_query.from_user.id
-    user_state[user_id] = data
-    if data == "video_trimmer":
-        await callback_query.message.reply("Send me a video to trim.")
-    elif data == "audio_remover":
-        await callback_query.message.reply("Send me a video to remove audio from.")
-    elif data == "audio_replacer":
-        await callback_query.message.reply("Send me the video whose audio you want to replace, followed by the new audio file.")
-    elif data == "video_to_audio":
-        await callback_query.message.reply("Send me a video to extract audio from.")
+# Command handler for '/trim_video' command
+@app.on_message(filters.command("trim_video"))
+async def trim_video_command(client, message: Message):
+    await message.reply("Please specify the start and end times in seconds (e.g., 10 30).")
 
+# Command handler for '/remove_audio' command
+@app.on_message(filters.command("remove_audio"))
+async def remove_audio_command(client, message: Message):
+    await message.reply("Send me a video to remove audio from.")
+
+# Command handler for '/merge_audio' command
+@app.on_message(filters.command("merge_audio"))
+async def merge_audio_command(client, message: Message):
+    await message.reply("Send me the video whose audio you want to replace, followed by the new audio file.")
+
+# Command handler for '/video_to_audio' command
+@app.on_message(filters.command("video_to_audio"))
+async def video_to_audio_command(client, message: Message):
+    await message.reply("Send me a video to extract audio from.")
+
+# Message handler for videos
 @app.on_message(filters.video)
 async def handle_video(client, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_state:
-        await message.reply("Please select an option first.")
-        return
-    
-    action = user_state[user_id]
-    video = message.video
-    file_path = await client.download_media(video, progress=progress_for_pyrogram, progress_args=("Downloading...", message, time.time(), client))
-    
-    if action == "video_trimmer":
-        await message.reply("Please specify the start and end times in seconds (e.g., 10 30).")
-        user_state[user_id] = ("trimming", file_path)
-    
-    elif action == "audio_remover":
-        await message.reply("Removing audio...")
-        output_path = "no_audio_video.mp4"
-        cmd = f"ffmpeg -i {file_path} -an {output_path}"
-        subprocess.run(cmd, shell=True)
-        await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
-        os.remove(file_path)
-        os.remove(output_path)
-    
-    elif action == "audio_replacer":
-        await message.reply("Send me the new audio file.")
-        user_state[user_id] = ("replacing", file_path)
-    
-    elif action == "video_to_audio":
-        await message.reply("Extracting audio...")
-        output_path = "extracted_audio.mp3"
-        cmd = f"ffmpeg -i {file_path} -q:a 0 -map a {output_path}"
-        subprocess.run(cmd, shell=True)
-        await client.send_audio(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
-        os.remove(file_path)
-        os.remove(output_path)
+    # Implement logic to handle various video processing tasks based on user state
+    pass
 
-@app.on_message(filters.audio)
-async def handle_audio(client, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_state or not isinstance(user_state[user_id], tuple):
-        await message.reply("Please select an option first.")
-        return
-    
-    action, video_path = user_state[user_id]
-    if action == "replacing":
-        audio = message.audio
-        audio_path = await client.download_media(audio, progress=progress_for_pyrogram, progress_args=("Downloading...", message, time.time(), client))
-        
-        await message.reply("Replacing audio...")
-        output_path = "replaced_audio_video.mp4"
-        cmd = f"ffmpeg -i {video_path} -i {audio_path} -c:v copy -map 0:v:0 -map 1:a:0 {output_path}"
-        subprocess.run(cmd, shell=True)
-        
-        await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
-        os.remove(video_path)
-        os.remove(audio_path)
-        os.remove(output_path)
-        del user_state[user_id]
-
-@app.on_message(filters.text)
-async def handle_text(client, message: Message):
-    user_id = message.from_user.id
-    if user_id in user_state and isinstance(user_state[user_id], tuple):
-        action, file_path = user_state[user_id]
-        if action == "trimming":
-            try:
-                start, end = map(int, message.text.split())
-                await message.reply("Trimming video...")
-                output_path = "trimmed_video.mp4"
-                cmd = f"ffmpeg -i {file_path} -ss {start} -to {end} -c copy {output_path}"
-                subprocess.run(cmd, shell=True)
-                await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
-                os.remove(file_path)
-                os.remove(output_path)
-                del user_state[user_id]
-            except ValueError:
-                await message.reply("Invalid format. Please specify the start and end times in seconds (e.g., 10 30).")
+# Callback query handler for interactive options
+@app.on_callback_query()
+async def handle_callback_query(client, query: CallbackQuery):
+    # Implement callback query handling for interactive options
+    pass
 
 if __name__ == "__main__":
     app.run()
