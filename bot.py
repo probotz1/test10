@@ -146,7 +146,7 @@ async def trim_video_command(client, message: Message):
         @app.on_message(filters.video)
         async def trim_video(client, video_message: Message):
             video_file = await download_media(client, video_message, DOWNLOADS_DIR)
-            output_file = os.path.join(DOWNLOADS_DIR, f"trimmed_{os.path.basename(video_file)}")
+            output_file = os.path.join(DOWNLOADS_DIR, f"trimmed_{os.path.basename(video_file)}.mp4")
 
             try:
                 cmd = [
@@ -172,7 +172,7 @@ async def remove_audio_command(client, message: Message):
     @app.on_message(filters.video)
     async def remove_audio(client, video_message: Message):
         video_file = await download_media(client, video_message, DOWNLOADS_DIR)
-        output_file = os.path.join(DOWNLOADS_DIR, f"no_audio_{os.path.basename(video_file)}")
+        output_file = os.path.join(DOWNLOADS_DIR, f"no_audio_{os.path.basename(video_file)}.mp4")
 
         try:
             cmd = [
@@ -199,7 +199,7 @@ async def merge_audio_command(client, message: Message):
         @app.on_message(filters.audio | filters.voice)
         async def audio_received(client, audio_message: Message):
             audio_file = await download_media(client, audio_message, DOWNLOADS_DIR)
-            output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}")
+            output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}.mp4")
 
             try:
                 cmd = [
