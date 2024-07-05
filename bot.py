@@ -1,10 +1,12 @@
+
 import os
 import time
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from moviepy.editor import VideoFileClip, AudioFileClip
 import config
 from progress import progress_for_pyrogram
+import asyncio
+import subprocess
 
 # Initialize Pyrogram Client
 app = Client("my_bot", api_id=config.api_id, api_hash=config.api_hash, bot_token=config.bot_token)
@@ -57,10 +59,9 @@ async def handle_video(client, message: Message):
     
     elif action == "audio_remover":
         await message.reply("Removing audio...")
-        clip = VideoFileClip(file_path)
-        clip = clip.without_audio()
         output_path = "no_audio_video.mp4"
-        clip.write_videofile(output_path)
+        cmd = f"ffmpeg -i {file_path} -an {output_path}"
+        subprocess.run(cmd, shell=True)
         await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
         os.remove(file_path)
         os.remove(output_path)
@@ -71,9 +72,9 @@ async def handle_video(client, message: Message):
     
     elif action == "video_to_audio":
         await message.reply("Extracting audio...")
-        clip = VideoFileClip(file_path)
         output_path = "extracted_audio.mp3"
-        clip.audio.write_audiofile(output_path)
+        cmd = f"ffmpeg -i {file_path} -q:a 0 -map a {output_path}"
+        subprocess.run(cmd, shell=True)
         await client.send_audio(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
         os.remove(file_path)
         os.remove(output_path)
@@ -91,11 +92,9 @@ async def handle_audio(client, message: Message):
         audio_path = await client.download_media(audio, progress=progress_for_pyrogram, progress_args=("Downloading...", message, time.time(), client))
         
         await message.reply("Replacing audio...")
-        video_clip = VideoFileClip(video_path)
-        audio_clip = AudioFileClip(audio_path)
-        new_video_clip = video_clip.set_audio(audio_clip)
         output_path = "replaced_audio_video.mp4"
-        new_video_clip.write_videofile(output_path)
+        cmd = f"ffmpeg -i {video_path} -i {audio_path} -c:v copy -map 0:v:0 -map 1:a:0 {output_path}"
+        subprocess.run(cmd, shell=True)
         
         await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
         os.remove(video_path)
@@ -112,9 +111,9 @@ async def handle_text(client, message: Message):
             try:
                 start, end = map(int, message.text.split())
                 await message.reply("Trimming video...")
-                clip = VideoFileClip(file_path).subclip(start, end)
                 output_path = "trimmed_video.mp4"
-                clip.write_videofile(output_path)
+                cmd = f"ffmpeg -i {file_path} -ss {start} -to {end} -c copy {output_path}"
+                subprocess.run(cmd, shell=True)
                 await client.send_video(message.chat.id, output_path, progress=progress_for_pyrogram, progress_args=("Uploading...", message, time.time(), client))
                 os.remove(file_path)
                 os.remove(output_path)
