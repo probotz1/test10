@@ -28,6 +28,9 @@ ETA: {4}
 # Dictionary to store the last update time for each message
 last_update_time = {}
 
+# Dictionary to store the user's current command state
+user_state = {}
+
 # Function to display human-readable file size
 def human_readable_size(size):
     power = 1024
@@ -141,25 +144,12 @@ async def trim_video_command(client, message: Message):
             await message.reply("End time must be greater than start time.")
             return
 
+        user_state[message.from_user.id] = {
+            "command": "trim_video",
+            "start_time": start_time,
+            "end_time": end_time
+        }
         await message.reply("Please send the video you want to trim.")
-
-        @app.on_message(filters.video)
-        async def trim_video(client, video_message: Message):
-            video_file = await download_media(client, video_message, DOWNLOADS_DIR)
-            output_file = os.path.join(DOWNLOADS_DIR, f"trimmed_{os.path.basename(video_file)}.mp4")
-
-            try:
-                cmd = [
-                    "ffmpeg", "-i", video_file, "-ss", str(start_time), "-to", str(end_time),
-                    "-c", "copy", output_file
-                ]
-                run_ffmpeg(cmd)
-                await video_message.reply_video(output_file)
-                os.remove(video_file)
-                os.remove(output_file)
-            except Exception as e:
-                await video_message.reply(f"Error trimming video: {e}")
-                os.remove(video_file)
 
     except ValueError:
         await message.reply("Please provide valid start and end times in seconds.")
@@ -167,11 +157,59 @@ async def trim_video_command(client, message: Message):
 # Command handler for '/remove_audio' command
 @app.on_message(filters.command("remove_audio"))
 async def remove_audio_command(client, message: Message):
+    user_state[message.from_user.id] = {
+        "command": "remove_audio"
+    }
     await message.reply("Send me a video to remove audio from.")
 
-    @app.on_message(filters.video)
-    async def remove_audio(client, video_message: Message):
-        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+# Command handler for '/merge_audio' command
+@app.on_message(filters.command("merge_audio"))
+async def merge_audio_command(client, message: Message):
+    user_state[message.from_user.id] = {
+        "command": "merge_audio",
+        "step": "send_video"
+    }
+    await message.reply("Send me the video whose audio you want to replace.")
+
+# Command handler for '/video_to_audio' command
+@app.on_message(filters.command("video_to_audio"))
+async def video_to_audio_command(client, message: Message):
+    user_state[message.from_user.id] = {
+        "command": "video_to_audio"
+    }
+    await message.reply("Send me a video to extract audio from.")
+
+# Message handler for videos
+@app.on_message(filters.video)
+async def handle_video(client, message: Message):
+    user_id = message.from_user.id
+    if user_id not in user_state:
+        return
+
+    command = user_state[user_id]["command"]
+
+    if command == "trim_video":
+        start_time = user_state[user_id]["start_time"]
+        end_time = user_state[user_id]["end_time"]
+        video_file = await download_media(client, message, DOWNLOADS_DIR)
+        output_file = os.path.join(DOWNLOADS_DIR, f"trimmed_{os.path.basename(video_file)}.mp4")
+
+        try:
+            cmd = [
+                "ffmpeg", "-i", video_file, "-ss", str(start_time), "-to", str(end_time),
+                "-c", "copy", output_file
+            ]
+            run_ffmpeg(cmd)
+            await message.reply_video(output_file)
+        except Exception as e:
+            await message.reply(f"Error trimming video: {e}")
+
+        os.remove(video_file)
+        os.remove(output_file)
+        user_state.pop(user_id)
+
+    elif command == "remove_audio":
+        video_file = await download_media(client, message, DOWNLOADS_DIR)
         output_file = os.path.join(DOWNLOADS_DIR, f"no_audio_{os.path.basename(video_file)}.mp4")
 
         try:
@@ -179,51 +217,59 @@ async def remove_audio_command(client, message: Message):
                 "ffmpeg", "-i", video_file, "-c", "copy", "-an", output_file
             ]
             run_ffmpeg(cmd)
-            await video_message.reply_video(output_file)
-            os.remove(video_file)
-            os.remove(output_file)
+            await message.reply_video(output_file)
         except Exception as e:
-            await video_message.reply(f"Error removing audio: {e}")
-            os.remove(video_file)
+            await message.reply(f"Error removing audio: {e}")
 
-# Command handler for '/merge_audio' command
-@app.on_message(filters.command("merge_audio"))
-async def merge_audio_command(client, message: Message):
-    await message.reply("Send me the video whose audio you want to replace, followed by the new audio file.")
+        os.remove(video_file)
+        os.remove(output_file)
+        user_state.pop(user_id)
 
-    @app.on_message(filters.video)
-    async def video_received(client, video_message: Message):
-        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
-        await video_message.reply("Now send me the audio file you want to merge with this video.")
+    elif command == "merge_audio" and user_state[user_id]["step"] == "send_video":
+        user_state[user_id]["video_file"] = await download_media(client, message, DOWNLOADS_DIR)
+        user_state[user_id]["step"] = "send_audio"
+        await message.reply("Now send me the audio file you want to merge with this video.")
 
-        @app.on_message(filters.audio | filters.voice)
-        async def audio_received(client, audio_message: Message):
-            audio_file = await download_media(client, audio_message, DOWNLOADS_DIR)
-            output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}.mp4")
+# Message handler for audio
+@app.on_message(filters.audio | filters.voice)
+async def handle_audio(client, message: Message):
+    user_id = message.from_user.id
+    if user_id not in user_state:
+        return
 
-            try:
-                cmd = [
-                    "ffmpeg", "-i", video_file, "-i", audio_file, "-c:v", "copy", "-map", "0:v:0",
-                    "-map", "1:a:0", "-shortest", output_file
-                ]
-                run_ffmpeg(cmd)
-                await video_message.reply_video(output_file)
-                os.remove(video_file)
-                os.remove(audio_file)
-                os.remove(output_file)
-            except Exception as e:
-                await video_message.reply(f"Error merging audio: {e}")
-                os.remove(video_file)
-                os.remove(audio_file)
+    command = user_state[user_id]["command"]
 
-# Command handler for '/video_to_audio' command
-@app.on_message(filters.command("video_to_audio"))
-async def video_to_audio_command(client, message: Message):
-    await message.reply("Send me a video to extract audio from.")
+    if command == "merge_audio" and user_state[user_id]["step"] == "send_audio":
+        audio_file = await download_media(client, message, DOWNLOADS_DIR)
+        video_file = user_state[user_id]["video_file"]
+        output_file = os.path.join(DOWNLOADS_DIR, f"merged_{os.path.basename(video_file)}.mp4")
 
-    @app.on_message(filters.video)
-    async def extract_audio(client, video_message: Message):
-        video_file = await download_media(client, video_message, DOWNLOADS_DIR)
+        try:
+            cmd = [
+                "ffmpeg", "-i", video_file, "-i", audio_file, "-c:v", "copy", "-c:a", "aac",
+                "-strict", "experimental", output_file
+            ]
+            run_ffmpeg(cmd)
+            await message.reply_video(output_file)
+        except Exception as e:
+            await message.reply(f"Error merging audio: {e}")
+
+        os.remove(video_file)
+        os.remove(audio_file)
+        os.remove(output_file)
+        user_state.pop(user_id)
+
+# Message handler for videos (continued)
+@app.on_message(filters.video)
+async def handle_video_continued(client, message: Message):
+    user_id = message.from_user.id
+    if user_id not in user_state:
+        return
+
+    command = user_state[user_id]["command"]
+
+    if command == "video_to_audio":
+        video_file = await download_media(client, message, DOWNLOADS_DIR)
         output_file = os.path.join(DOWNLOADS_DIR, f"{os.path.splitext(os.path.basename(video_file))[0]}.mp3")
 
         try:
@@ -231,12 +277,13 @@ async def video_to_audio_command(client, message: Message):
                 "ffmpeg", "-i", video_file, "-q:a", "0", "-map", "a", output_file
             ]
             run_ffmpeg(cmd)
-            await video_message.reply_audio(output_file)
-            os.remove(video_file)
-            os.remove(output_file)
+            await message.reply_audio(output_file)
         except Exception as e:
-            await video_message.reply(f"Error extracting audio: {e}")
-            os.remove(video_file)
+            await message.reply(f"Error extracting audio: {e}")
+
+        os.remove(video_file)
+        os.remove(output_file)
+        user_state.pop(user_id)
 
 if __name__ == "__main__":
     app.run()
