@@ -1,72 +1,294 @@
+
+import os
+import shutil
 import time
-import math
-import asyncio
-from pyrogram import Client
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from pyrogram.enums import ParseMode
 
-PROGRESS = """
-• {0} of {1}
-• Speed: {2}
-• ETA: {3}
-"""
+import psutil
 
-async def progress_for_pyrogram(current, total, ud_type, message, start, client: Client):
-    now = time.time()
-    diff = now - start
-    if round(diff % 10.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff
-        elapsed_time = round(diff)
-        time_to_completion = round((total - current) / speed)
-        estimated_total_time = elapsed_time + time_to_completion
-        elapsed_time = TimeFormatter(seconds=elapsed_time)
-        estimated_total_time = TimeFormatter(seconds=estimated_total_time)
-        progress = "[{0}{1}]".format(
-            ''.join(["⬢" for i in range(math.floor(percentage / 10))]),
-            ''.join(["⬡" for i in range(10 - math.floor(percentage / 10))])
-        )
-        tmp = progress + PROGRESS.format(
-            humanbytes(current),
-            humanbytes(total),
-            humanbytes(speed) + "/s",
-            estimated_total_time if estimated_total_time != '' else "Calculating"
-        )
+from bot import Button, botStartTime, dt, subprocess, version_file
+from bot.config import _bot, conf
+from bot.fun.emojis import enmoji
+from bot.utils.bot_utils import add_temp_user, get_readable_file_size, rm_temp_user
+from bot.utils.bot_utils import time_formatter as tf
+from bot.utils.db_utils import save2db2
+from bot.utils.msg_utils import (
+    edit_message,
+    pm_is_allowed,
+    reply_message,
+    temp_is_allowed,
+    user_is_allowed,
+    user_is_owner,
+)
+from bot.utils.os_utils import file_exists
+
+
+async def up(event, args, client):
+    """ping bot!"""
+    if not user_is_allowed(event.sender_id):
+        return await event.delete()
+    ist = dt.now()
+    msg = await reply_message(event, "…")
+    st = dt.now()
+    ims = (st - ist).microseconds / 1000
+    msg1 = "**Pong! ——** `{}`__ms__"
+    st = dt.now()
+    await edit_message(msg, msg1.format(ims))
+    ed = dt.now()
+    ms = (ed - st).microseconds / 1000
+    await edit_message(msg, f"1. {msg1.format(ims)}\n2. {msg1.format(ms)}")
+
+
+async def status(event, args, client):
+    """Gets status of bot and server where bot is hosted.
+    Requires no arguments."""
+    if not user_is_allowed(event.sender_id):
+        return await event.delete()
+    branch = _bot.repo_branch or "❓"
+    last_commit = "UNAVAILABLE!"
+    if os.path.exists(".git"):
         try:
-            await client.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=message.id,
-                text="{}\n{}".format(
-                    ud_type,
-                    tmp
+            last_commit = subprocess.check_output(
+                ["git log -1 --date=short --pretty=format:'%cd || %cr'"], shell=True
+            ).decode()
+        except Exception:
+            pass
+
+    if file_exists(version_file):
+        with open(version_file, "r") as file:
+            vercheck = file.read().strip()
+            file.close()
+    else:
+        vercheck = "Tf?"
+    currentTime = tf(time.time() - botStartTime)
+    ostime = tf(time.time() - psutil.boot_time())
+    swap = psutil.swap_memory()
+    total, used, free = shutil.disk_usage(".")
+    total = get_readable_file_size(total)
+    used = get_readable_file_size(used)
+    free = get_readable_file_size(free)
+    sent = get_readable_file_size(psutil.net_io_counters().bytes_sent)
+    recv = get_readable_file_size(psutil.net_io_counters().bytes_recv)
+    cpuUsage = psutil.cpu_percent(interval=0.5)
+    p_cores = psutil.cpu_count(logical=False)
+    t_cores = psutil.cpu_count(logical=True)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/").percent
+    await event.reply(
+        f"**Version:** `{vercheck}`\n"
+        f"**Branch:** `{branch}`\n"
+        f"**Commit Date:** `{last_commit}`\n\n"
+        f"**Bot Uptime:** `{currentTime}`\n"
+        f"**System Uptime:** `{ostime}`\n\n"
+        f"**Total Disk Space:** `{total}`\n"
+        f"**Used:** `{used}` "
+        f"**Free:** `{free}`\n\n"
+        f"**SWAP:** `{get_readable_file_size(swap.total)}`"
+        f"** | **"
+        f"**Used:** `{swap.percent}%`\n\n"
+        f"**Upload:** `{sent}`\n"
+        f"**Download:** `{recv}`\n\n"
+        f"**Physical Cores:** `{p_cores}`\n"
+        f"**Total Cores:** `{t_cores}`\n\n"
+        f"**CPU:** `{cpuUsage}%` "
+        f"**RAM:** `{memory.percent}%` "
+        f"**DISK:** `{disk}%`\n\n"
+        f"**Total RAM:** `{get_readable_file_size(memory.total)}`\n"
+        f"**Used:** `{get_readable_file_size(memory.used)}` "
+        f"**Free:** `{get_readable_file_size(memory.available)}`"
+    )
+
+
+async def start(event, args, client):
+    """A function for the start command, accepts no arguments yet!"""
+    currentTime = tf(time.time() - botStartTime)
+    msg = ""
+    msg1 = f"Hi `{event.sender.first_name}`\n"
+    msg2 = (
+        f"{msg1}I've been alive for `{currentTime}` and i'm ready to encode videos 😗"
+    )
+    msg3 = f"{msg2}\nand by the way you're a temporary user"
+    user = event.sender_id
+    if not user_is_owner(user) and event.is_private:
+        if not pm_is_allowed(in_pm=True):
+            return await event.delete()
+    if temp_is_allowed(user):
+        msg = msg3
+    elif not user_is_allowed(user):
+        priv = await event.client.get_entity(int(conf.OWNER.split()[0]))
+        msg = f"{msg1}i am power full compreser bot"
+        msg += f"\n [{priv.first_name}](tg://user?id={conf.OWNER.split()[0]}) "
+        msg += "he is created me."
+
+    if not msg:
+        msg = msg2
+    await event.reply(
+        msg,
+        buttons=[
+            [Button.inline("Help", data="ihelp")],
+            [
+                Button.url(
+                    "Group",
+                    url="https://t.me/Compressorgroupbot",
                 ),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("JOIN", url='https://t.me/ATXBOTSi')]]),
-                parse_mode=ParseMode.MARKDOWN
+                Button.url("Developer", url="https://t.me/Dorahari"),
+            ],
+            [Button.url("update", url="https://t.me/ATXBOTS")],
+        ],
+    )
+
+
+async def help(event, args, client):
+    return await start(event, args, client)
+
+
+async def ihelp(event):
+    await event.edit(
+        "**⛩️ ATX Encode bot**\n\n+"
+        "This bot encodes videos With ffmpeg ."
+        "\n+Easy to Use "
+        ".\n\nJust Forward a Video to @Compressorgroupbot "
+        "\n\nFor available commands click the Commands button below.",
+        buttons=[
+            [Button.inline("Commands", data="icommands")],
+            [Button.inline("🔙 Back", data="beck")],
+        ],
+    )
+
+
+async def beck(event):
+    sender = event.query.user_id
+    currentTime = tf(time.time() - botStartTime)
+    msg = ""
+    msg1 = f"Hi `{event.sender.first_name}`\n"
+    msg2 = (
+        f"{msg1}I've been alive for `{currentTime}` and i'm ready to encode videos 😗"
+    )
+    msg3 = f"{msg2}\nand by the way you're a temporary user"
+    if temp_is_allowed(sender):
+        msg = msg3
+    elif not user_is_allowed(sender):
+        priv = await event.client.get_entity(int(conf.OWNER.split()[0]))
+        msg = f"{msg1}i am power full compreser bot"
+        msg += f"\n [{priv.first_name}](tg://user?id={conf.OWNER.split()[0]}) "
+        msg += "he is created me."
+    if not msg:
+        msg = msg2
+    await event.edit(
+        msg,
+        buttons=[
+            [Button.inline("Help", data="ihelp")],
+            [
+                Button.url(
+                    "Group",
+                    url="https://t.me/Compressorgroupbot",
+                ),
+                Button.url("Developer", url="https://t.me/Dorahari"),
+            ],
+            [Button.url("update", url="https://t.me/ATXBOTS")],
+        ],
+    )
+
+
+async def temp_unauth(event, args, client):
+    """
+    Un-authorise a user or chat
+    Requires either reply to message or user_id as args
+    """
+    sender = event.sender_id
+    error = "Failed!,\nCan't remove from temporarily allowed users"
+    if not user_is_owner(sender):
+        return event.reply("Not Happening.")
+    if event.is_reply:
+        rep_event = await event.get_reply_message()
+        new_id = rep_event.sender_id
+    else:
+        if args is not None:
+            args = args.strip()
+            if args.lstrip("-").isdigit():
+                new_id = int(args)
+            else:
+                return await event.reply(
+                    f"What do you mean by  `{args}` ?\nneed help? send /unpermit"
+                )
+        else:
+            return await event.reply(
+                "Either reply to a message sent by the user you want to remove from temporarily allowed users or send /unpermit (user-id)\nExample:\n  /unpermit 123456"
             )
-        except Exception as e:
-            print(f"Error: {e}")
-        await asyncio.sleep(5)
+    if new_id == sender:
+        return await event.reply("Why, oh why did you try to unpermit yourself?")
+    if user_is_owner(new_id):
+        return await event.reply(f"{error} because user is already a privileged user")
+    if not user_is_allowed(new_id):
+        return await event.reply(
+            f"{error} because user is not in the temporary allowed user list"
+        )
+    try:
+        new_user = await event.client.get_entity(new_id)
+        new_user = new_user.first_name
+    except Exception:
+        new_user = new_id
+    rm_temp_user(str(new_id))
+    await save2db2()
+    return await event.reply(
+        f"Removed `{new_user}` from temporarily allowed users {enmoji()}"
+    )
 
-def humanbytes(size):
-    """ Humanize size """
-    if not size:
-        return ""
-    power = 1024
-    n = 0
-    power_dict = {0: '', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
-    while size > power:
-        size /= power
-        n += 1
-    return "{:.2f} {}B".format(size, power_dict[n])
+
+async def temp_auth(event, args, client):
+    """
+    Authorizes a chat or user,
+    Requires either a reply to message or user_id as argument
+    """
+    sender = event.sender_id
+    error = "Failed!,\nCan't add to temporarily allowed users"
+    if not user_is_owner(sender):
+        return event.reply("Nope, not happening.")
+    if event.is_reply:
+        rep_event = await event.get_reply_message()
+        new_id = rep_event.sender_id
+    else:
+        if args is not None:
+            args = args.strip()
+            if args.lstrip("-").isdigit():
+                new_id = args
+            else:
+                return await event.reply(
+                    f"What do you mean by  `{args}` ?\nneed help? send /permit"
+                )
+        else:
+            return await event.reply(
+                "Either reply to a message sent by the user you want to add to temporarily allowed users or send /permit (user-id)\nExample:\n  /permit 123456"
+            )
+    new_id = int(new_id)
+    if new_id == sender:
+        return await event.reply("Why, oh why did you try to permit yourself?")
+    if user_is_owner(new_id):
+        return await event.reply(f"{error} because user is already a privileged user")
+    if user_is_allowed(new_id):
+        return await event.reply(f"{error} because user is already added")
+    try:
+        new_user = await event.client.get_entity(new_id)
+        new_user = new_user.first_name
+    except Exception:
+        new_user = new_id
+    add_temp_user(str(new_id))
+    await save2db2()
+    return await event.reply(
+        f"Added `{new_user}` to temporarily allowed users {enmoji()}"
+    )
 
 
-def TimeFormatter(seconds: float) -> str:
-    """ Humanize time """
-    minutes, seconds = divmod(int(seconds), 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
-    tmp = ((str(days) + "d, ") if days else "") + \
-          ((str(hours) + "h, ") if hours else "") + \
-          ((str(minutes) + "m, ") if minutes else "") + \
-          ((str(seconds) + "s, ") if seconds else "")
-    return tmp[:-2]
+async def icommands(event):
+    s = conf.CMD_SUFFIX or str()
+    await event.edit(
+        f"""`
+start{s} - check if bot is awake and get usage.
+ping - ping!
+showthumb{s} - 🖼️ show current thumbnail
+cancelall{s} - ❌ clear cached downloads & queued files
+help{s} - same as start`
+
+All above commands accept '-h' / '--help' arguments to get more detailed help about each command.
+        """,
+        buttons=[Button.inline("🔙 Back", data="ihelp")],
+    )
